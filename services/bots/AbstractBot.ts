@@ -543,7 +543,7 @@ abstract class AbstractBot {
         //Need to remove the pending order from the memory if there is any error
         this.removeOrderByClOrdId(clientOrderId);
 
-        this.removeOrdersInMemory(clientOrderId);
+        this.removeOrderInMemory(clientOrderId);
       }
 
       const nonceErr = "Nonce too high";
@@ -1205,28 +1205,29 @@ abstract class AbstractBot {
   }
 
   async cancelOrderList(orderIds: string[] = [], nbrofOrderstoCancel = 30) {
-    try {
-      let idsToCancel: string[] = [];
-      if (orderIds.length === 0) {
-        let i = 0;
-        for (const order of this.orders.values()) {
-          if (order.id){
-            idsToCancel.push(order.id);
-          }
-          i++;
-          if (i >= nbrofOrderstoCancel) {
-            // More than xx orders in a cancel will run out of gas
-            break;
-          }
+
+    let idsToCancel: string[] = [];
+    if (orderIds.length === 0) {
+      let i = 0;
+      for (const order of this.orders.values()) {
+        if (order.id){
+          idsToCancel.push(order.id);
         }
-      } else {
-        for (let i = 0; i < orderIds.length; i++){
-          if (orderIds[i]){
-            idsToCancel.push(orderIds[i]);
-          }
+        i++;
+        if (i >= nbrofOrderstoCancel) {
+          // More than xx orders in a cancel will run out of gas
+          break;
         }
       }
+    } else {
+      for (let i = 0; i < orderIds.length; i++){
+        if (orderIds[i]){
+          idsToCancel.push(orderIds[i]);
+        }
+      }
+    }
 
+    try {
       //const orderIds = Array.from(this.orders.keys());
       if (idsToCancel.length > 0) {
         this.orderCount++;
@@ -1291,6 +1292,8 @@ abstract class AbstractBot {
     if (tries > 2){
       console.log("unable to cancel order:",order);
     }
+    
+    this.removeOrderInMemory(order.clientOrderId);
     try {
       const gasest = await this.getCancelOrderGasEstimate(order);
 
@@ -1338,6 +1341,7 @@ abstract class AbstractBot {
       }
       return true;
     } catch (error: any) {
+      this.ordersInMemory.push(order);
       const nonceErr = "Nonce too high";
       const idx = error.message.indexOf(nonceErr);
       if (error.code === "NONCE_EXPIRED" || idx > -1) {
@@ -1396,7 +1400,7 @@ abstract class AbstractBot {
     const clientOrderId = await this.getClientOrderId(0,this.counter);
 
     // replace orderInMemory
-    this.removeOrdersInMemory(order.clientOrderId);
+    this.removeOrderInMemory(order.clientOrderId);
     this.ordersInMemory.push({clientOrderId:clientOrderId,side:order.side,price:priceToSend,qty:quantityToSend});
 
     console.log("CANCEL REPLACE: New clientOrderid: ", clientOrderId," PRICE:", price.toNumber(), " QTY: ", quantity.toNumber());
@@ -1448,7 +1452,7 @@ abstract class AbstractBot {
       }
       return true;
     } catch (error: any) {
-      this.removeOrdersInMemory(clientOrderId);
+      this.removeOrderInMemory(clientOrderId);
       this.ordersInMemory.push({clientOrderId:order.clientOrderId,side:order.side,price:order.priceToSend,qty:order.quantityToSend});
       
       const nonceErr = "Nonce too high";
@@ -1620,14 +1624,16 @@ abstract class AbstractBot {
   }
 
   async getOrdersByClientOrderIds (){
-    this.ordersInMemory.forEach(async (e,i)=>{
-      let order = await this.getOrderByClientOrderId(e.clientOrderId)
+    let i = this.ordersInMemory.length-1;
+    while (i >= 0){
+      let order = await this.getOrderByClientOrderId(this.ordersInMemory[i].clientOrderId);
       if (order){
         this.ordersInMemory[i] = order;
       } else {
-        console.log("FAILED TO FIND ORDER: ", e);
+        console.log("REMOVING ORDER FROM ordersInMemory: ", this.ordersInMemory[i]);
+        this.ordersInMemory[i].splice(i,1);
       }
-    })
+    }
   }
 
   async getOrderByClientOrderId (clientOrderId: string){
@@ -2033,7 +2039,7 @@ abstract class AbstractBot {
     return [this.currentBestBid,this.currentBestAsk];
   }
 
-  removeOrdersInMemory(clientOrderId:any){
+  removeOrderInMemory(clientOrderId:any){
     let i = this.ordersInMemory.length-1; // remove 
     while (i >= 0){
       if (clientOrderId == this.ordersInMemory[i].clientOrderId){
