@@ -69,6 +69,7 @@ abstract class AbstractBot {
   protected currentBestAsk: any;
   protected counter: any;
   protected retrigger = false;
+  protected ordersInMemory : any[] = [];
 
   constructor(botId: number, pairStr: string, privateKey: string, ratelimit_token?: string) {
     this.logger = getLogger("Bot");
@@ -456,6 +457,7 @@ abstract class AbstractBot {
       quantities.push(quantityToSend);
       sides.push(newOrders[i].side);
       type2s.push(3);
+      this.ordersInMemory.push({clientOrderId:clientOrderId,side:newOrders[i].side,price:priceToSend,qty:quantityToSend});
 
       const order = this.makeOrder(
         this.account,
@@ -540,6 +542,8 @@ abstract class AbstractBot {
       for (const clientOrderId of clientOrderIds) {
         //Need to remove the pending order from the memory if there is any error
         this.removeOrderByClOrdId(clientOrderId);
+
+        this.removeOrdersInMemory(clientOrderId);
       }
 
       const nonceErr = "Nonce too high";
@@ -1380,21 +1384,24 @@ abstract class AbstractBot {
       return
     }
 
+    this.checkWashTrade(order.side, price);
+
+    const priceToSend = utils.parseUnits(price.toFixed(this.quoteDisplayDecimals), this.contracts[this.quote].tokenDetails.evmdecimals);
+    const quantityToSend = utils.parseUnits(
+      quantity.toFixed(this.baseDisplayDecimals),
+      this.contracts[this.base].tokenDetails.evmdecimals
+    );
+    //get unique counter to generate clientOrderId
+    this.counter ++
+    const clientOrderId = await this.getClientOrderId(0,this.counter);
+
+    // replace orderInMemory
+    this.removeOrdersInMemory(order.clientOrderId);
+    this.ordersInMemory.push({clientOrderId:clientOrderId,side:order.side,price:priceToSend,qty:quantityToSend});
+
+    console.log("CANCEL REPLACE: New clientOrderid: ", clientOrderId," PRICE:", price.toNumber(), " QTY: ", quantity.toNumber());
+    
     try {
-      this.checkWashTrade(order.side, price);
-
-      const priceToSend = utils.parseUnits(price.toFixed(this.quoteDisplayDecimals), this.contracts[this.quote].tokenDetails.evmdecimals);
-      const quantityToSend = utils.parseUnits(
-        quantity.toFixed(this.baseDisplayDecimals),
-        this.contracts[this.base].tokenDetails.evmdecimals
-      );
-      //get unique counter to generate clientOrderId
-      this.counter ++
-      const clientOrderId = await this.getClientOrderId(0,this.counter);
-      // Not using the gasEstimate because it fails with P-AFNE1 when funds are tight but the actual C/R doesn't
-
-      console.log("CANCEL REPLACE: New clientOrderid: ", clientOrderId," PRICE:", price.toNumber(), " QTY: ", quantity.toNumber());
-
       //const gasest = await this.getCancelReplaceOrderGasEstimate(order.id, clientOrderId ,priceToSend, quantityToSend);
 
       //console.log("CANCEL REPLACE: GOT GASEST");
@@ -1441,6 +1448,9 @@ abstract class AbstractBot {
       }
       return true;
     } catch (error: any) {
+      this.removeOrdersInMemory(clientOrderId);
+      this.ordersInMemory.push({clientOrderId:order.clientOrderId,side:order.side,price:order.priceToSend,qty:order.quantityToSend});
+      
       const nonceErr = "Nonce too high";
       const idx = error.message.indexOf(nonceErr);
       if (error.code === "NONCE_EXPIRED" || idx > -1) {
@@ -1605,6 +1615,26 @@ abstract class AbstractBot {
     } catch (error: any) {
       //this.logger.error(`${this.instanceName} Error during checkOrderInChain ${orderinMemory.clientOrderId}`, error);
       console.log("error during checkorderinchain", orderinMemory.clientOrderId, error)
+      return false;
+    }
+  }
+
+  async getOrdersByClientOrderIds (){
+    this.ordersInMemory.forEach(async (e,i)=>{
+      let order = await this.getOrderByClientOrderId(e.clientOrderId)
+      if (order){
+        this.ordersInMemory[i] = order;
+      } else {
+        console.log("FAILED TO FIND ORDER: ", e);
+      }
+    })
+  }
+
+  async getOrderByClientOrderId (clientOrderId: string){
+    try {
+      let order = await this.tradePair.getOrderByClientOrderID(clientOrderId);
+      return order;
+    } catch {
       return false;
     }
   }
@@ -2001,6 +2031,15 @@ abstract class AbstractBot {
     console.log(this.currentBestBid);
 
     return [this.currentBestBid,this.currentBestAsk];
+  }
+
+  removeOrdersInMemory(clientOrderId:any){
+    let i = this.ordersInMemory.length-1; // remove 
+    while (i >= 0){
+      if (clientOrderId == this.ordersInMemory[i].clientOrderId){
+        this.ordersInMemory[i].splice(i,1);
+      }
+    }
   }
 
   async cleanUpAndExit() {

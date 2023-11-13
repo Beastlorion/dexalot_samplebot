@@ -58,7 +58,7 @@ class MarketMakerBot extends AbstractBot {
       await this.getNewMarketPrice();
       // await this.getBestOrders();
 
-      this.interval = 8000; //Min 8 seconds
+      this.interval = 4000; //Min 8 seconds
 
       // PNL  TO KEEP TRACK OF PNL , FEE & TCOST  etc
       //this.PNL = new PNL(getConfig('NODE_ENV_SETTINGS'), this.instanceName, this.base, this.quote, this.config, this.account);
@@ -129,7 +129,7 @@ class MarketMakerBot extends AbstractBot {
         // }
         
         // updates balances, gets best bids and asks, and corrects the nonce
-        await Promise.all([this.getBalances(),this.getBestOrders(),this.correctNonce(this.contracts["SubNetProvider"]),this.processOpenOrders()]);
+        await Promise.all([this.getBalances(),this.getBestOrders(),this.correctNonce(this.contracts["SubNetProvider"]),this.getOrdersByClientOrderIds(),this.processOpenOrders()]);
         this.lastChange = Math.abs(this.marketPrice.toNumber()-this.lastMarketPrice.toNumber())/this.marketPrice.toNumber();
         
         let startingBidPriceBG = this.marketPrice.multipliedBy(1-this.getBidSpread()).dp(this.quoteDisplayDecimals, BigNumber.ROUND_DOWN);
@@ -153,7 +153,7 @@ class MarketMakerBot extends AbstractBot {
         let duplicates: any[] = [];
 
         // cycles through all active orders in memory and sorts them into bids or asks. If they are duplicate records, cancel their corresponding orders. They will be replaced on the next loop.
-        this.orders.forEach((e,i)=>{
+        this.ordersInMemory.forEach((e,i)=>{
           if (e.side === 0 && e.level > 0 && (e.status == 0 || e.status == 2)){
             let skip = false;
             for (let i = 0;i<bids.length; i++){
@@ -232,7 +232,8 @@ class MarketMakerBot extends AbstractBot {
           let startingBidPriceBG = new BigNumber(currentBestAsk - this.getIncrement())
           startingBidPrice = startingBidPriceBG.dp(this.quoteDisplayDecimals,BigNumber.ROUND_DOWN).toNumber();
 
-          await Promise.all([this.replaceBids(bidsSorted, startingBidPrice),this.replaceAsks(asksSorted, startingAskPrice)]);
+          await this.replaceBids(bidsSorted, startingBidPrice)
+          await this.replaceAsks(asksSorted, startingAskPrice)
           this.lastMarketPrice = this.marketPrice;
           if (parseFloat(this.contracts[this.quote].portfolioTot) > this.minTradeAmnt * 2 && this.useRetrigger){
             this.retrigger = true;
@@ -241,14 +242,16 @@ class MarketMakerBot extends AbstractBot {
           let startingAskPriceBG = new BigNumber(currentBestBid + this.getIncrement())
           startingAskPrice = startingAskPriceBG.dp(this.quoteDisplayDecimals,BigNumber.ROUND_UP).toNumber();
 
-          await Promise.all([this.replaceBids(bidsSorted, startingBidPrice),this.replaceAsks(asksSorted, startingAskPrice)]);
+          await this.replaceAsks(asksSorted, startingAskPrice)
+          await this.replaceBids(bidsSorted, startingBidPrice)
           this.lastMarketPrice = this.marketPrice;
           if (parseFloat(this.contracts[this.base].portfolioTot) * takerBidPrice > this.minTradeAmnt * 2 && this.useRetrigger){
             this.retrigger = true;
           } else {this.retrigger = false;}
 
         } else { // replace all orders
-          await Promise.all([this.replaceBids(bidsSorted, startingBidPrice),this.replaceAsks(asksSorted, startingAskPrice)]);
+          await this.replaceBids(bidsSorted, startingBidPrice)
+          this.replaceAsks(asksSorted, startingAskPrice)
           this.lastMarketPrice = this.marketPrice;
           this.retrigger = false;
         }
