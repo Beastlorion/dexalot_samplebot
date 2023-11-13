@@ -1631,7 +1631,7 @@ abstract class AbstractBot {
         this.ordersInMemory[i] = order;
       } else {
         console.log("REMOVING ORDER FROM ordersInMemory: ", this.ordersInMemory[i]);
-        this.ordersInMemory[i].splice(i,1);
+        this.ordersInMemory.splice(i,1);
       }
     }
   }
@@ -2043,7 +2043,7 @@ abstract class AbstractBot {
     let i = this.ordersInMemory.length-1; // remove 
     while (i >= 0){
       if (clientOrderId == this.ordersInMemory[i].clientOrderId){
-        this.ordersInMemory[i].splice(i,1);
+        this.ordersInMemory.splice(i,1);
       }
     }
   }
