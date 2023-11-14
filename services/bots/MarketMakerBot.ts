@@ -158,7 +158,6 @@ class MarketMakerBot extends AbstractBot {
 
         // cycles through all active orders in memory and sorts them into bids or asks. If they are duplicate records, cancel their corresponding orders. They will be replaced on the next loop.
         this.ordersInMemory.forEach((e,i)=>{
-          console.log(e);
           if (e.side === 0 && e.level > 0 && (e.status == 0 || e.status == 2)){
             let skip = false;
             for (let i = 0;i<bids.length; i++){

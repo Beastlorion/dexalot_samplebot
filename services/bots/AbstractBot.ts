@@ -1612,10 +1612,10 @@ abstract class AbstractBot {
   }
 
   async getOrdersByClientOrderId(){
-    for (let orderInMemory of this.ordersInMemory.entries()){
-      let order = await this.getOrderByClientOrderId(orderInMemory[0]);
+    for (let clientOrderId of this.ordersInMemory.keys()){
+      let order = await this.getOrderByClientOrderId(clientOrderId);
       if (order.id != ADDRESS0){
-        this.ordersInMemory.set(orderInMemory[0],{
+        this.ordersInMemory.set(clientOrderId,{
           "id":order.id,
           "tradePairId":order.tradePairId,
           "price":new BigNumber(order.price.toString()).shiftedBy(-18),
@@ -1628,9 +1628,9 @@ abstract class AbstractBot {
           "type1":order.type1,
           "type2":order.type2,
           "status":order.status,
-          "level":orderInMemory[1].level
+          "level":this.ordersInMemory.get(clientOrderId).level
         });
-        console.log(orderInMemory[0], this.blocknumber, Date.now());
+        console.log(clientOrderId, this.blocknumber, Date.now());
       }
     }
   }
