@@ -27,6 +27,7 @@ abstract class AbstractBot {
   protected base: string;
   protected quote: string;
   protected orders: Map<any, any>;
+  protected ordersInMemory: Map<any, any>;
   protected initialized = false;
 
   protected account = "0x";
@@ -69,7 +70,7 @@ abstract class AbstractBot {
   protected currentBestAsk: any;
   protected counter: any;
   protected retrigger = false;
-  protected ordersInMemory : any[] = [];
+  protected blocknumber : number;
 
   constructor(botId: number, pairStr: string, privateKey: string, ratelimit_token?: string) {
     this.logger = getLogger("Bot");
@@ -77,14 +78,15 @@ abstract class AbstractBot {
     this.logger.info(`${this.instanceName} Base Class constructor`);
     this.botId = botId;
     this.tradePairIdentifier = pairStr;
-    this.config = getConfig(this.tradePairIdentifier);
     this.base = pairStr.substring(0, pairStr.indexOf("/"));
     this.quote = pairStr.substring(pairStr.indexOf("/") + 1);
     this.privateKey = privateKey;
     this.orders = new Map();
+    this.ordersInMemory = new Map();
     this.orderbook = new OrderBook();
     this.ratelimit_token = ratelimit_token;
     this.counter = 0;
+    this.blocknumber = 0;
 
     (axios.defaults.headers! as unknown as Record<string, any>).common["Origin"] = getConfig("ORIGIN_LINK");
     (axios.defaults.headers! as unknown as Record<string, any>).common["User-Agent"] =
@@ -201,6 +203,7 @@ abstract class AbstractBot {
   }
   async initialize(): Promise<boolean> {
     if (!this.initialized) {
+      this.config = await this.getBotConfig();
       this.pairObject = await this.getPairs();
       if (this.pairObject) {
         await this.getEnvironments();
@@ -328,12 +331,6 @@ abstract class AbstractBot {
       const balancesRefreshed = await this.doInitialFunding();
       this.saveBalancestoDb(balancesRefreshed);
 
-      //FIXME this is not working
-      this.contracts["SubNetProvider"].provider.on("pending", (tx: any) => {
-        this.processPending.bind(tx, this);
-        // Emitted when any new pending transaction is noticed
-      });
-
       if (!this.filter) {
         this.logger.info(`${this.instanceName} Starting Order Listener`);
         this.filter = this.tradePair.filters.OrderStatusChanged(null, this.account); //, this.tradePairByte32 not filtering by symbol on purpose
@@ -383,6 +380,22 @@ abstract class AbstractBot {
     },5000);
   }
 
+  getSettingValue(settingname: string) {
+    const settingIdx = this.config.findIndex((item: { setting_name: string }) => item.setting_name === settingname);
+    let settingVal;
+
+    if (settingIdx > -1) {
+      if (this.config[settingIdx].setting_data_type === "NUMBER") {
+        settingVal = Number(this.config[settingIdx].setting_value);
+      } else {
+        settingVal = this.config[settingIdx].setting_value;
+      }
+    } else {
+      this.logger.warn(`${this.instanceName} Setting: ${settingname} not found`);
+    }
+    return settingVal;
+  }
+
   abstract saveBalancestoDb(balancesRefreshed: boolean): Promise<void>;
   abstract getPrice(side: number): BigNumber;
   abstract getAlotPrice(): Promise<number>;
@@ -421,11 +434,11 @@ abstract class AbstractBot {
     const sides = [];
     const type2s = [];
 
-    const blocknumber = (await this.contracts["SubNetProvider"].provider.getBlockNumber()) || 0;
+    this.blocknumber = (await this.contracts["SubNetProvider"].provider.getBlockNumber()) || 0;
 
     for (let i = 0; i < newOrders.length; i++){
       this.counter ++
-      const clientOrderId = await this.getClientOrderId(blocknumber, this.counter);
+      const clientOrderId = await this.getClientOrderId(this.blocknumber, this.counter);
       newOrders[i].clientOrderId = clientOrderId;
       const priceToSend = utils.parseUnits(
         newOrders[i].price.toFixed(this.quoteDisplayDecimals),
@@ -441,7 +454,6 @@ abstract class AbstractBot {
       quantities.push(quantityToSend);
       sides.push(newOrders[i].side);
       type2s.push(3);
-      this.ordersInMemory.push({clientOrderId:clientOrderId,side:newOrders[i].side,price:priceToSend,quantity:quantityToSend,level:newOrders[i].level});
 
       const order = this.makeOrder(
         this.account,
@@ -466,6 +478,7 @@ abstract class AbstractBot {
       );
 
       this.addOrderToMap(order);
+      this.ordersInMemory.set(clientOrderId,{price:priceToSend,quantity:quantityToSend, side:newOrders[i].side, level: newOrders[i].level});
     }
 
     try {
@@ -526,8 +539,7 @@ abstract class AbstractBot {
       for (const clientOrderId of clientOrderIds) {
         //Need to remove the pending order from the memory if there is any error
         this.removeOrderByClOrdId(clientOrderId);
-
-        this.removeOrderInMemory(clientOrderId);
+        this.ordersInMemory.delete(clientOrderId);
       }
 
       const nonceErr = "Nonce too high";
@@ -741,7 +753,7 @@ abstract class AbstractBot {
     }
   }
 
-  async getClientOrderId(blocknumber = 0, counter = 1): Promise<string> {
+  async getClientOrderId(blocknumber = this.blocknumber, counter = 1): Promise<string> {
     if (blocknumber === 0) {
       blocknumber = (await this.contracts["SubNetProvider"].provider.getBlockNumber()) || 0;
     }
@@ -1189,29 +1201,28 @@ abstract class AbstractBot {
   }
 
   async cancelOrderList(orderIds: string[] = [], nbrofOrderstoCancel = 30) {
-
-    let idsToCancel: string[] = [];
-    if (orderIds.length === 0) {
-      let i = 0;
-      for (const order of this.orders.values()) {
-        if (order.id){
-          idsToCancel.push(order.id);
-        }
-        i++;
-        if (i >= nbrofOrderstoCancel) {
-          // More than xx orders in a cancel will run out of gas
-          break;
-        }
-      }
-    } else {
-      for (let i = 0; i < orderIds.length; i++){
-        if (orderIds[i]){
-          idsToCancel.push(orderIds[i]);
-        }
-      }
-    }
-
     try {
+      let idsToCancel: string[] = [];
+      if (orderIds.length === 0) {
+        let i = 0;
+        for (const order of this.orders.values()) {
+          if (order.id){
+            idsToCancel.push(order.id);
+          }
+          i++;
+          if (i >= nbrofOrderstoCancel) {
+            // More than xx orders in a cancel will run out of gas
+            break;
+          }
+        }
+      } else {
+        for (let i = 0; i < orderIds.length; i++){
+          if (orderIds[i]){
+            idsToCancel.push(orderIds[i]);
+          }
+        }
+      }
+
       //const orderIds = Array.from(this.orders.keys());
       if (idsToCancel.length > 0) {
         this.orderCount++;
@@ -1276,8 +1287,6 @@ abstract class AbstractBot {
     if (tries > 2){
       console.log("unable to cancel order:",order);
     }
-    
-    this.removeOrderInMemory(order.clientOrderId);
     try {
       const gasest = await this.getCancelOrderGasEstimate(order);
 
@@ -1325,7 +1334,6 @@ abstract class AbstractBot {
       }
       return true;
     } catch (error: any) {
-      this.ordersInMemory.push(order);
       const nonceErr = "Nonce too high";
       const idx = error.message.indexOf(nonceErr);
       if (error.code === "NONCE_EXPIRED" || idx > -1) {
@@ -1372,27 +1380,24 @@ abstract class AbstractBot {
       return
     }
 
-    this.checkWashTrade(order.side, price);
+      this.checkWashTrade(order.side, price);
 
-    const priceToSend = utils.parseUnits(price.toFixed(this.quoteDisplayDecimals), this.contracts[this.quote].tokenDetails.evmdecimals);
-    const quantityToSend = utils.parseUnits(
-      quantity.toFixed(this.baseDisplayDecimals),
-      this.contracts[this.base].tokenDetails.evmdecimals
-    );
-    //get unique counter to generate clientOrderId
-    this.counter ++
-    const clientOrderId = await this.getClientOrderId(0,this.counter);
+      const priceToSend = utils.parseUnits(price.toFixed(this.quoteDisplayDecimals), this.contracts[this.quote].tokenDetails.evmdecimals);
+      const quantityToSend = utils.parseUnits(
+        quantity.toFixed(this.baseDisplayDecimals),
+        this.contracts[this.base].tokenDetails.evmdecimals
+      );
+      //get unique counter to generate clientOrderId
+      this.counter ++
+      const clientOrderId = await this.getClientOrderId(0,this.counter);
+      // Not using the gasEstimate because it fails with P-AFNE1 when funds are tight but the actual C/R doesn't
 
-    // replace orderInMemory
-    this.removeOrderInMemory(order.clientOrderId);
-    this.ordersInMemory.push({clientOrderId:clientOrderId,side:order.side,price:priceToSend,quantity:quantityToSend,level:order.level});
+      console.log("CANCEL REPLACE: New clientOrderid: ", clientOrderId," PRICE:", price.toNumber(), " QTY: ", quantity.toNumber(), Date.now());
 
-    console.log("CANCEL REPLACE: New clientOrderid: ", clientOrderId," PRICE:", price.toNumber(), " QTY: ", quantity.toNumber());
-    
-    try {
+      this.ordersInMemory.set(clientOrderId,{price:priceToSend,quantity:quantityToSend, side:order.side, level: order.level});
+
+      try {
       //const gasest = await this.getCancelReplaceOrderGasEstimate(order.id, clientOrderId ,priceToSend, quantityToSend);
-
-      //console.log("CANCEL REPLACE: GOT GASEST");
 
       //this.logger.debug (`${this.instanceName} CancelReplace order gasEstimate: ${gasest} `); // ${tcost}
       this.orderCount++;
@@ -1403,7 +1408,6 @@ abstract class AbstractBot {
       );
       const options = await this.getOptions(this.contracts["SubNetProvider"], BigNumberEthers.from(1200000));
       const tx = await this.tradePair.cancelReplaceOrder(order.id, clientOrderId, priceToSend, quantityToSend, options);
-      let timestamp = Date.now();
       const orderLog = await tx.wait();
 
       if (orderLog) {
@@ -1411,7 +1415,6 @@ abstract class AbstractBot {
           if (_log.event) {
             if (_log.event === "OrderStatusChanged") {
               if (_log.args.traderaddress === this.account && _log.args.pair === this.tradePairByte32) {
-                console.log("ORDER UPDATE:",(Date.now() - timestamp))
                 await this.processOrders(
                   _log.args.version,
                   this.account,
@@ -1438,9 +1441,8 @@ abstract class AbstractBot {
       }
       return true;
     } catch (error: any) {
-      this.removeOrderInMemory(clientOrderId);
-      this.ordersInMemory.push(order);
-      
+      this.ordersInMemory.delete(clientOrderId);
+
       const nonceErr = "Nonce too high";
       const idx = error.message.indexOf(nonceErr);
       if (error.code === "NONCE_EXPIRED" || idx > -1) {
@@ -1604,46 +1606,38 @@ abstract class AbstractBot {
       }
     } catch (error: any) {
       //this.logger.error(`${this.instanceName} Error during checkOrderInChain ${orderinMemory.clientOrderId}`, error);
-      console.log("error during checkorderinchain", orderinMemory.clientOrderId, error)
+      console.log("error during checkorderinchain", error)
       return false;
     }
   }
 
-  async getOrdersByClientOrderIds (){
-    let i = this.ordersInMemory.length-1;
-    while (i >= 0){
-      let order = await this.getOrderByClientOrderId(this.ordersInMemory[i].clientOrderId);
-      if (order.id != "0x0000000000000000000000000000000000000000000000000000000000000000"){
-        this.ordersInMemory[i].id = order.id;
-        this.ordersInMemory[i].price = new BigNumber(order.price.toString()).shiftedBy(-18);
-        this.ordersInMemory[i].totalAmount = new BigNumber(order.totalAmount.toString()).shiftedBy(-18);
-        this.ordersInMemory[i].quantity = new BigNumber(order.quantity.toString()).shiftedBy(-18);
-        this.ordersInMemory[i].quantityFilled = new BigNumber(order.quantityFilled.toString()).shiftedBy(-18);
-        this.ordersInMemory[i].totalFee = new BigNumber(order.totalFee.toString()).shiftedBy(-18);
-        this.ordersInMemory[i].side = order.side;
-        this.ordersInMemory[i].type1 = order.type1;
-        this.ordersInMemory[i].type2 = order.type2;
-        this.ordersInMemory[i].status = order.status;
-      } else if (order.id =="0x0000000000000000000000000000000000000000000000000000000000000000"){
-
-      } else {
-        console.log("REMOVING ORDER FROM ordersInMemory: ", this.ordersInMemory[i]);
-        this.ordersInMemory.splice(i,1);
+  async getOrdersByClientOrderId(){
+    for (let orderInMemory of this.ordersInMemory.entries()){
+      let order = await this.getOrderByClientOrderId(orderInMemory[0]);
+      if (order.id != ADDRESS0){
+        this.ordersInMemory.set(orderInMemory[0],{
+          "id":order.id,
+          "tradePairId":order.tradePairId,
+          "price":new BigNumber(order.price.toString()).shiftedBy(-18),
+          "totalAmount":new BigNumber(order.totalAmount.toString()).shiftedBy(-18),
+          "quantity":new BigNumber(order.quantity.toString()).shiftedBy(-18),
+          "quantityfilled":new BigNumber(order.quantityFilled.toString()).shiftedBy(-18),
+          "totalFee":new BigNumber(order.totalFee.toString()).shiftedBy(-18),
+          "traderaddress":order.traderaddress,
+          "side":order.side,
+          "type1":order.type1,
+          "type2":order.type2,
+          "status":order.status,
+          "level":orderInMemory[1].level
+        });
+        console.log(orderInMemory[0], this.blocknumber, Date.now());
       }
-      i-=1
     }
   }
 
-  async getOrderByClientOrderId (clientOrderId: string){
-    try {
-      let order = await this.tradePair.getOrderByClientOrderId(this.config.account_no,clientOrderId);
-      if (order.id =="0x0000000000000000000000000000000000000000000000000000000000000000"){
-        console.log("missing order", clientOrderId);
-      }
-      return order;
-    } catch {
-      return false;
-    }
+  async getOrderByClientOrderId(clientOrderId: string){
+    let order = await this.tradePair.getOrderByClientOrderId(this.account,clientOrderId);
+    return order
   }
 
   async depositToken(contract: any, symbolByte32: string, decimals: number, deposit_amount: any) {
@@ -2038,16 +2032,6 @@ abstract class AbstractBot {
     console.log(this.currentBestBid);
 
     return [this.currentBestBid,this.currentBestAsk];
-  }
-
-  removeOrderInMemory(clientOrderId:any){
-    let i = this.ordersInMemory.length-1; // remove 
-    while (i >= 0){
-      if (clientOrderId == this.ordersInMemory[i].clientOrderId){
-        this.ordersInMemory.splice(i,1);
-      }
-      i-=1
-    }
   }
 
   async cleanUpAndExit() {
