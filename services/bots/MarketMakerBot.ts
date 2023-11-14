@@ -33,7 +33,6 @@ class MarketMakerBot extends AbstractBot {
     super(botId, pairStr, privateKey);
     // Will try to rebalance the amounts in the Portfolio Contract
     this.portfolioRebalanceAtStart = false;
-    this.config = getConfig(this.tradePairIdentifier);
     this.bidSpread = this.config.bidSpread/100;
     this.askSpread = this.config.askSpread/100;
     this.orderLevels = this.config.orderLevels;
@@ -58,7 +57,7 @@ class MarketMakerBot extends AbstractBot {
       await this.getNewMarketPrice();
       // await this.getBestOrders();
 
-      this.interval = 4000; //Min 8 seconds
+      this.interval = 6000; //Min 8 seconds
 
       // PNL  TO KEEP TRACK OF PNL , FEE & TCOST  etc
       //this.PNL = new PNL(getConfig('NODE_ENV_SETTINGS'), this.instanceName, this.base, this.quote, this.config, this.account);
@@ -321,7 +320,7 @@ class MarketMakerBot extends AbstractBot {
     console.log("REPLACE BIDS: ",bidsSorted.length, "startingBidPrice:", startingBidPrice);
     let quoteAvail = parseFloat(this.contracts[this.quote].portfolioAvail);
     for (let i = 0; i < this.orderLevels; i ++){
-      let order = {id:null, status:null, quantity:new BigNumber(0),quantityfilled:new BigNumber(0), level:0, price: new BigNumber(0)};
+      let order = {id:null, status:null, quantity:new BigNumber(0),quantityFilled:new BigNumber(0), level:0, price: new BigNumber(0)};
       for (let j = 0; j < bidsSorted.length; j++){
         if (bidsSorted[j].level == i+1){
           order = bidsSorted[j];
@@ -330,7 +329,7 @@ class MarketMakerBot extends AbstractBot {
 
       if (order.id){
         let bidPrice = new BigNumber((startingBidPrice * (1-this.getOrderLevelSpread(i))).toFixed(this.quoteDisplayDecimals));
-        let amountOnOrder = (order.quantity.toNumber()-order.quantityfilled.toNumber())*order.price.toNumber() * 0.9999;
+        let amountOnOrder = (order.quantity.toNumber()-order.quantityFilled.toNumber())*order.price.toNumber() * 0.9999;
         let availableFunds = quoteAvail + amountOnOrder;
         let bidQty = new BigNumber(this.getQty(bidPrice,0,i+1,availableFunds));
         let amountToPlace = bidQty;
@@ -365,14 +364,14 @@ class MarketMakerBot extends AbstractBot {
     let baseAvail = parseFloat(this.contracts[this.base].portfolioAvail);
 
     for (let i = 0; i < this.orderLevels; i ++){
-      let order = {id:null, status:null, quantity:new BigNumber(0),quantityfilled:new BigNumber(0), level:0};
+      let order = {id:null, status:null, quantity:new BigNumber(0),quantityFilled:new BigNumber(0), level:0};
       for (let j = 0; j < asksSorted.length; j++){
         if (asksSorted[j].level == i+1){
           order = asksSorted[j];
         }
       }
       if (order.id){
-        let amountOnOrder = (order.quantity.toNumber()-order.quantityfilled.toNumber()) * .9999;
+        let amountOnOrder = (order.quantity.toNumber()-order.quantityFilled.toNumber()) * .9999;
         let availableFunds = baseAvail + amountOnOrder;
 
         let askPrice = new BigNumber((startingAskPrice * (1+this.getOrderLevelSpread(i))).toFixed(this.quoteDisplayDecimals));

@@ -77,6 +77,7 @@ abstract class AbstractBot {
     this.logger.info(`${this.instanceName} Base Class constructor`);
     this.botId = botId;
     this.tradePairIdentifier = pairStr;
+    this.config = getConfig(this.tradePairIdentifier);
     this.base = pairStr.substring(0, pairStr.indexOf("/"));
     this.quote = pairStr.substring(pairStr.indexOf("/") + 1);
     this.privateKey = privateKey;
@@ -200,7 +201,6 @@ abstract class AbstractBot {
   }
   async initialize(): Promise<boolean> {
     if (!this.initialized) {
-      this.config = await this.getBotConfig();
       this.pairObject = await this.getPairs();
       if (this.pairObject) {
         await this.getEnvironments();
@@ -383,22 +383,6 @@ abstract class AbstractBot {
     },5000);
   }
 
-  getSettingValue(settingname: string) {
-    const settingIdx = this.config.findIndex((item: { setting_name: string }) => item.setting_name === settingname);
-    let settingVal;
-
-    if (settingIdx > -1) {
-      if (this.config[settingIdx].setting_data_type === "NUMBER") {
-        settingVal = Number(this.config[settingIdx].setting_value);
-      } else {
-        settingVal = this.config[settingIdx].setting_value;
-      }
-    } else {
-      this.logger.warn(`${this.instanceName} Setting: ${settingname} not found`);
-    }
-    return settingVal;
-  }
-
   abstract saveBalancestoDb(balancesRefreshed: boolean): Promise<void>;
   abstract getPrice(side: number): BigNumber;
   abstract getAlotPrice(): Promise<number>;
@@ -457,7 +441,7 @@ abstract class AbstractBot {
       quantities.push(quantityToSend);
       sides.push(newOrders[i].side);
       type2s.push(3);
-      this.ordersInMemory.push({clientOrderId:clientOrderId,side:newOrders[i].side,price:priceToSend,qty:quantityToSend});
+      this.ordersInMemory.push({clientOrderId:clientOrderId,side:newOrders[i].side,price:priceToSend,quantity:quantityToSend,level:newOrders[i].level});
 
       const order = this.makeOrder(
         this.account,
@@ -1401,7 +1385,7 @@ abstract class AbstractBot {
 
     // replace orderInMemory
     this.removeOrderInMemory(order.clientOrderId);
-    this.ordersInMemory.push({clientOrderId:clientOrderId,side:order.side,price:priceToSend,qty:quantityToSend});
+    this.ordersInMemory.push({clientOrderId:clientOrderId,side:order.side,price:priceToSend,quantity:quantityToSend,level:order.level});
 
     console.log("CANCEL REPLACE: New clientOrderid: ", clientOrderId," PRICE:", price.toNumber(), " QTY: ", quantity.toNumber());
     
@@ -1419,6 +1403,7 @@ abstract class AbstractBot {
       );
       const options = await this.getOptions(this.contracts["SubNetProvider"], BigNumberEthers.from(1200000));
       const tx = await this.tradePair.cancelReplaceOrder(order.id, clientOrderId, priceToSend, quantityToSend, options);
+      let timestamp = Date.now();
       const orderLog = await tx.wait();
 
       if (orderLog) {
@@ -1426,6 +1411,7 @@ abstract class AbstractBot {
           if (_log.event) {
             if (_log.event === "OrderStatusChanged") {
               if (_log.args.traderaddress === this.account && _log.args.pair === this.tradePairByte32) {
+                console.log("ORDER UPDATE:",(Date.now() - timestamp))
                 await this.processOrders(
                   _log.args.version,
                   this.account,
@@ -1453,7 +1439,7 @@ abstract class AbstractBot {
       return true;
     } catch (error: any) {
       this.removeOrderInMemory(clientOrderId);
-      this.ordersInMemory.push({clientOrderId:order.clientOrderId,side:order.side,price:order.priceToSend,qty:order.quantityToSend});
+      this.ordersInMemory.push(order);
       
       const nonceErr = "Nonce too high";
       const idx = error.message.indexOf(nonceErr);
@@ -1627,18 +1613,33 @@ abstract class AbstractBot {
     let i = this.ordersInMemory.length-1;
     while (i >= 0){
       let order = await this.getOrderByClientOrderId(this.ordersInMemory[i].clientOrderId);
-      if (order){
-        this.ordersInMemory[i] = order;
+      if (order.id != "0x0000000000000000000000000000000000000000000000000000000000000000"){
+        this.ordersInMemory[i].id = order.id;
+        this.ordersInMemory[i].price = new BigNumber(order.price.toString()).shiftedBy(-18);
+        this.ordersInMemory[i].totalAmount = new BigNumber(order.totalAmount.toString()).shiftedBy(-18);
+        this.ordersInMemory[i].quantity = new BigNumber(order.quantity.toString()).shiftedBy(-18);
+        this.ordersInMemory[i].quantityFilled = new BigNumber(order.quantityFilled.toString()).shiftedBy(-18);
+        this.ordersInMemory[i].totalFee = new BigNumber(order.totalFee.toString()).shiftedBy(-18);
+        this.ordersInMemory[i].side = order.side;
+        this.ordersInMemory[i].type1 = order.type1;
+        this.ordersInMemory[i].type2 = order.type2;
+        this.ordersInMemory[i].status = order.status;
+      } else if (order.id =="0x0000000000000000000000000000000000000000000000000000000000000000"){
+
       } else {
         console.log("REMOVING ORDER FROM ordersInMemory: ", this.ordersInMemory[i]);
         this.ordersInMemory.splice(i,1);
       }
+      i-=1
     }
   }
 
   async getOrderByClientOrderId (clientOrderId: string){
     try {
-      let order = await this.tradePair.getOrderByClientOrderID(clientOrderId);
+      let order = await this.tradePair.getOrderByClientOrderId(this.config.account_no,clientOrderId);
+      if (order.id =="0x0000000000000000000000000000000000000000000000000000000000000000"){
+        console.log("missing order", clientOrderId);
+      }
       return order;
     } catch {
       return false;
@@ -2045,6 +2046,7 @@ abstract class AbstractBot {
       if (clientOrderId == this.ordersInMemory[i].clientOrderId){
         this.ordersInMemory.splice(i,1);
       }
+      i-=1
     }
   }
 
