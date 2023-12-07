@@ -448,10 +448,11 @@ class MarketMakerBot extends AbstractBot {
 
   // returns % away from market price to place order
   getOrderLevelSpread(level:number):number{
+    let dynamicSpread = this.useDynamicSpreads ? this.dynamicSpread : 0;
     if (level != 0 && this.useIndependentLevels && this.independentLevels[(level+1).toString()].customSpread){
-      return parseFloat(this.independentLevels[(level+1).toString()].customSpread)/100;
+      return parseFloat(this.independentLevels[(level+1).toString()].customSpread)/100 + dynamicSpread;
     } else {
-      return (level*parseFloat(this.orderLevelSpread))
+      return (level*parseFloat(this.orderLevelSpread) + dynamicSpread)
     }
   }
 
