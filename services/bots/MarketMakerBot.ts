@@ -271,7 +271,7 @@ class MarketMakerBot extends AbstractBot {
       this.orderUpdater = setTimeout(async ()=>{
         if (this.status){
           await Promise.all([this.getNewMarketPrice(),this.getDynamicSpreads()]);
-          this.timer = 2000;
+          this.timer = 200;
           this.updateOrders();
         }
       }, this.timer);
