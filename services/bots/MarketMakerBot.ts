@@ -26,6 +26,8 @@ class MarketMakerBot extends AbstractBot {
   protected lastUpdate = 0;
   protected defensiveSkew: any;
   protected slip: any;
+  protected useDynamicSpreads: any;
+  protected dynamicSpread = 0;
   protected lastChange = 0;
   protected useRetrigger = false;
   protected useIndependentLevels: boolean = false;
@@ -47,6 +49,7 @@ class MarketMakerBot extends AbstractBot {
     this.takerEnabled = this.config.takerEnabled;
     this.defensiveSkew = this.config.defensiveSkew/100;
     this.slip = this.config.slip;
+    this.useDynamicSpreads = this.config.useDynamicSpreads;
     this.useRetrigger = this.config.useRetrigger
     this.useIndependentLevels = this.config.useIndependentLevels
     this.independentLevels = this.config.independentLevels;
@@ -61,6 +64,7 @@ class MarketMakerBot extends AbstractBot {
     const initializing = await super.initialize();
     if (initializing) {
       await this.getNewMarketPrice();
+      await this.getDynamicSpreads();
       // await this.getBestOrders();
 
       this.interval = 10000; //Min 8 seconds
@@ -105,7 +109,7 @@ class MarketMakerBot extends AbstractBot {
       } else {
         console.log("MISSING PRICE DATA - baseUsd:",this.baseUsd, " quoteUsd: ",this.quoteUsd, "Wait 10 seconds then try again");
         await utils.sleep(10000);
-        await this.getNewMarketPrice();
+        await Promise.all([this.getNewMarketPrice(),this.getDynamicSpreads()]);
         this.startOrderUpdater();
       }
     } else {
@@ -266,7 +270,7 @@ class MarketMakerBot extends AbstractBot {
       //Update orders again after interval
       this.orderUpdater = setTimeout(async ()=>{
         if (this.status){
-          await Promise.all([this.getNewMarketPrice()]);
+          await Promise.all([this.getNewMarketPrice(),this.getDynamicSpreads()]);
           this.timer = 2000;
           this.updateOrders();
         }
@@ -461,8 +465,13 @@ class MarketMakerBot extends AbstractBot {
     if (multiple >= 2 && this.defensiveSkew){
       defensiveSkew = multiple < 6 ? this.defensiveSkew * Math.floor(multiple-1) : this.defensiveSkew * 5
     }
-    let bidSpread = this.bidSpread + defensiveSkew + slip;
-    console.log("Bid Spread:",bidSpread);
+    let bidSpread = 0;
+    if (this.useDynamicSpreads && this.dynamicSpread){
+      bidSpread = this.dynamicSpread + defensiveSkew + slip;
+    } else {
+      bidSpread = this.bidSpread + defensiveSkew + slip;
+    }
+    console.log("Bid Spread:",bidSpread * 100);
     return bidSpread;
   }
 
@@ -477,8 +486,13 @@ class MarketMakerBot extends AbstractBot {
       multiple = 1/multiple;
       defensiveSkew = multiple < 6 ? this.defensiveSkew * Math.floor(multiple-1) : this.defensiveSkew * 5
     }
-    let askSpread = this.askSpread + defensiveSkew + slip;
-    console.log("Ask Spread:",askSpread);
+    let askSpread = 0;
+    if (this.useDynamicSpreads && this.dynamicSpread){
+      askSpread = this.dynamicSpread + defensiveSkew + slip;
+    } else {
+      askSpread = this.askSpread + defensiveSkew + slip;
+    }
+    console.log("Ask Spread:",askSpread * 100);
     return askSpread;
   }
 
@@ -502,6 +516,17 @@ class MarketMakerBot extends AbstractBot {
       } else {
         throw 'trouble getting base or quote prices'
       }
+    } catch (error: any) {
+      this.logger.error(`${this.instanceName} Error during getNewMarketPrice`, error);
+    }
+    return this.marketPrice;
+  }
+  async getDynamicSpreads() {
+    try {
+      let response = await axios.get('http://localhost:3000/spreads');
+      let spreads = response.data;
+      this.dynamicSpread = spreads[this.base+'-USD'];
+      // console.log("SPREADS",spreads)
     } catch (error: any) {
       this.logger.error(`${this.instanceName} Error during getNewMarketPrice`, error);
     }
