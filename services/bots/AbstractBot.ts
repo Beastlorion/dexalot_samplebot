@@ -172,7 +172,7 @@ abstract class AbstractBot {
 
   getEnvironment(envtype: string) {
     //mainnet, subnet
-    return this.environments.find((item: any) => item.type === envtype && item.env == "production-multi-avax");
+    return this.environments.find((item: any) => item.type === envtype && (item.env == "production-multi-avax" || item.env == "production-multi-subnet"));
   }
 
   async getTokenDetails() {
