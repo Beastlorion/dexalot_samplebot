@@ -180,7 +180,7 @@ abstract class AbstractBot {
   }
 
   async getTokenDetail(symbol: string): Promise<any> {
-    return this.tokenDetails.find((item: any) => item.symbol === symbol);
+    return this.tokenDetails.find((item: any) => item.symbol === symbol && item.env == "production-multi-avax");
   }
 
   async setNonce(provider: string): Promise<any> {
