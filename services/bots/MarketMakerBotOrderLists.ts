@@ -76,7 +76,7 @@ class MarketMakerBot extends AbstractBot {
 
       await this.correctNonce(this.contracts["SubNetProvider"]);
       //Cancel any remaining orders
-      await this.cancelOrderList([], 100);
+      await this.cancelOrderList([]);
 
       if (this.baseUsd && this.quoteUsd){
         // ------------ Create and Send Initial Order List ------------ //
@@ -123,7 +123,7 @@ class MarketMakerBot extends AbstractBot {
         this.lastChange = Math.abs(this.marketPrice.toNumber()-this.lastMarketPrice.toNumber())/this.marketPrice.toNumber();
 
         // Cancel all orders, when finished, trigger the new order placement.
-        const promise = Promise.resolve(this.cancelOrderList([], 100));
+        const promise = Promise.resolve(this.cancelOrderList([]));
 
         if (this.baseUsd && this.quoteUsd){
           // ------------ Create new Order List ------------ //
