@@ -906,11 +906,11 @@ abstract class AbstractBot {
 
   async getWalletBalance(tokenDetails: any, provider: any, envType = "subnet") {
     let balance;
-    if (this.isNative(tokenDetails.symbol, envType)) {
+    if (this.isNative(tokenDetails.subnet_symbol, envType)) {
       balance = await provider.getBalance(this.account);
     } else {
       if (envType === "mainnet") {
-        balance = await this.contracts[tokenDetails.symbol].deployedContract.balanceOf(this.account);
+        balance = await this.contracts[tokenDetails.subnet_symbol].deployedContract.balanceOf(this.account);
       } else {
         balance = BigNumberEthers.from(0);
       }
